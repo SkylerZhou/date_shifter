@@ -51,32 +51,43 @@ def run_modify_edf_script(csv_file, edf_file, output_dir):
         
         # Extract information from output
         for line in output_lines:
-            if 'Extracted patient ID for lookup:' in line:
-                info['patient_identifier'] = line.split("'")[1]
-            elif 'Random day offset:' in line:
-                info['random_days_offset'] = line.split(':')[1].strip().split()[0]
-            elif 'Parsed original datetime:' in line:
+            if 'Patient ID:' in line:
+                info['patient_identifier'] = line.split(':', 1)[1].strip()
+            elif 'Original date/time:' in line:
                 datetime_str = line.split(':', 1)[1].strip()
                 try:
-                    dt = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M:%S')
-                    info['original_edf_startdate'] = dt.strftime('%Y-%m-%d')
-                    info['original_edf_starttime'] = dt.strftime('%H:%M:%S')
+                    parts = datetime_str.split(' ')
+                    if len(parts) >= 2:
+                        info['original_edf_startdate'] = parts[0]
+                        info['original_edf_starttime'] = parts[1]
                 except:
                     pass
-            elif 'New calculated datetime:' in line:
+            elif 'New date/time:' in line:
                 datetime_str = line.split(':', 1)[1].strip()
                 try:
-                    dt = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M:%S')
-                    info['new_edf_startdate'] = dt.strftime('%Y-%m-%d')
-                    info['new_edf_starttime'] = dt.strftime('%H:%M:%S')
+                    parts = datetime_str.split(' ')
+                    if len(parts) >= 2:
+                        info['new_edf_startdate'] = parts[0]
+                        info['new_edf_starttime'] = parts[1]
                 except:
                     pass
-            elif 'Successfully modified EDF file:' in line:
+            elif 'New calculated date:' in line:
+                # Extract the random days offset if we can find it elsewhere
+                # This line format: "New calculated date: 2018-11-13 (time unchanged: 13:33:45)"
+                try:
+                    date_part = line.split(':', 1)[1].strip().split(' ')[0]
+                    info['new_edf_startdate'] = date_part
+                except:
+                    pass
+            elif '✓ Successfully modified EDF file:' in line or 'Successfully modified EDF file:' in line:
                 info['status'] = 'success'
             elif 'WARNING:' in line or 'Error:' in line:
                 info['error_message'] = line.strip()
         
-        if result.returncode != 0:
+        # Check exit code to determine success since success message might not be printed
+        if result.returncode == 0 and not info['error_message']:
+            info['status'] = 'success'
+        elif result.returncode != 0:
             info['status'] = 'failed'
             if not info['error_message']:
                 info['error_message'] = result.stderr.strip() or 'Unknown error'

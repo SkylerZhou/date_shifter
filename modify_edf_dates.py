@@ -51,7 +51,7 @@ def format_edf_time(datetime_obj):
     return f"{datetime_obj.hour:02d}.{datetime_obj.minute:02d}.{datetime_obj.second:02d}"
 
 def read_csv_lookup(csv_file):
-    """Read CSV and create lookup dictionary."""
+    """Read the random_number CSV and create lookup dictionary."""
     lookup = {}
     try:
         with open(csv_file, 'r') as f:
@@ -116,11 +116,9 @@ def modify_edf_header(edf_file, lookup, max_date, output_file=None):
     
     # Extract patient identifier
     patient_id_raw = content[8:88].decode('ascii', errors='ignore').strip()
-    print(f"Patient identifier in EDF: '{patient_id_raw}'")
     
     # Extract the relevant part (between 2nd and 3rd hyphen)
     patient_id = extract_patient_id_from_edf_header(patient_id_raw)
-    print(f"Extracted patient ID for lookup: '{patient_id}'")
     
     # Check if patient ID exists in lookup
     if patient_id not in lookup:
@@ -129,24 +127,21 @@ def modify_edf_header(edf_file, lookup, max_date, output_file=None):
         return None
     
     random_days = lookup[patient_id]
-    print(f"Random day offset: {random_days} days")
     
     # Extract current start date and time
     start_date_str = content[168:176].decode('ascii', errors='ignore')
     start_time_str = content[176:184].decode('ascii', errors='ignore')
-    print(f"Original start date: {start_date_str}")
-    print(f"Original start time: {start_time_str}")
     
     try:
         original_datetime = parse_edf_datetime(start_date_str, start_time_str)
-        print(f"Parsed original datetime: {original_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
     except Exception as e:
         print(f"Error parsing datetime '{start_date_str} {start_time_str}': {e}")
         return None
     
-    # Calculate new datetime
-    new_datetime = original_datetime + timedelta(days=random_days)
-    print(f"New calculated datetime: {new_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+    # Calculate new date (keeping the same time)
+    new_date = original_datetime.date() + timedelta(days=random_days)
+    new_datetime = datetime.combine(new_date, original_datetime.time())
+    print(f"New calculated date: {new_datetime.strftime('%Y-%m-%d')} (time unchanged: {original_datetime.strftime('%H:%M:%S')})")
     
     # Check if new date exceeds maximum allowed date
     if new_datetime.date() > max_date.date():
@@ -154,20 +149,13 @@ def modify_edf_header(edf_file, lookup, max_date, output_file=None):
         print("Modification aborted for this file.")
         return None
     
-    # Format new date and time for EDF
+    # Format new date for EDF (time remains unchanged)
     new_date_str = format_edf_date(new_datetime)
-    new_time_str = format_edf_time(new_datetime)
-    print(f"New start date (EDF format): {new_date_str}")
-    print(f"New start time (EDF format): {new_time_str}")
     
-    # Modify the header
+    # Modify the header - only change the date field
     # Ensure date is exactly 8 bytes (padded with spaces if needed)
     new_date_bytes = new_date_str.ljust(8).encode('ascii')
     content[168:176] = new_date_bytes
-    
-    # Modify the time field as well
-    new_time_bytes = new_time_str.ljust(8).encode('ascii')
-    content[176:184] = new_time_bytes
     
     # Write to output file
     if output_file is None:
@@ -177,16 +165,14 @@ def modify_edf_header(edf_file, lookup, max_date, output_file=None):
     
     with open(output_file, 'wb') as f:
         f.write(content)
-    
-    print(f"✓ Successfully modified EDF file: {output_file}")
-    
+        
     # Return information for CSV output
     return {
         'patient_identifier': patient_id,
         'original_edf_startdate': original_datetime.strftime('%Y-%m-%d'),
         'original_edf_starttime': original_datetime.strftime('%H:%M:%S'),
         'new_edf_startdate': new_datetime.strftime('%Y-%m-%d'),
-        'new_edf_starttime': new_datetime.strftime('%H:%M:%S'),
+        'new_edf_starttime': original_datetime.strftime('%H:%M:%S'),  # Time remains unchanged
         'random_days_offset': random_days,
         'output_file': output_file
     }
@@ -226,7 +212,6 @@ def main():
     result = modify_edf_header(edf_file, lookup, max_date, output_file)
     
     if result:
-        print("\n✓ Process completed successfully!")
         print(f"Patient ID: {result['patient_identifier']}")
         print(f"Original date/time: {result['original_edf_startdate']} {result['original_edf_starttime']}")
         print(f"New date/time: {result['new_edf_startdate']} {result['new_edf_starttime']}")
