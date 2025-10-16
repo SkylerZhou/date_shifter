@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script: random_number_generator.sh
-# Description: Extracts identifiers from first column (screening_id) and adds random day offset (±10 years)
+# Description: Extracts identifiers from first column (screening_id) and adds random day offset (±3 years)
 
 # Check if input file is provided
 if [ $# -eq 0 ]; then
@@ -42,15 +42,15 @@ unique_identifiers=$(printf '%s\n' "${identifiers[@]}" | sort | uniq)
 echo "Found $(echo "$unique_identifiers" | wc -l) unique identifiers"
 
 # Create output file with headers
-echo "identifier,random_number" > "$OUTPUT_FILE"
+echo "patient_identifier,random_number" > "$OUTPUT_FILE"
 
 # Generate random numbers for each unique identifier
 while IFS= read -r identifier; do
     # Skip empty lines
     if [ -n "$identifier" ]; then
-        # Generate random number between -3650 and +3650 (±10 years in days)
-        # Range: -3650 to +3650, total span of 7301 values
-        random_days=$((RANDOM % 7301 - 3650))
+        # Generate random number between -1095 and +1095 (±3 years in days)
+        # Range: -1095 to +1095, total span of 2191 values
+        random_days=$((RANDOM % 2191 - 1095))
         
         # Write to output file
         echo "$identifier,$random_days" >> "$OUTPUT_FILE"
@@ -58,4 +58,4 @@ while IFS= read -r identifier; do
 done <<< "$unique_identifiers"
 
 echo "Processing complete! Output saved to: $OUTPUT_FILE"
-echo "Random day offsets range: -3650 to +3650 days (±10 years)"
+echo "Random day offsets range: -1095 to +1095 days (±3 years)"

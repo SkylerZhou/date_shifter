@@ -1,2 +1,5 @@
 *.csv
 *.edf
+*.xml
+
+/legacy_files/
