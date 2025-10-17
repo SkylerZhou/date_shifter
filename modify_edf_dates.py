@@ -92,7 +92,7 @@ def extract_patient_id_from_edf_header(patient_id_raw):
         print(f"Warning: Could not extract patient ID from '{patient_id_raw}'")
         return patient_id_raw.strip()
 
-def modify_edf_header(edf_file, lookup, max_date, output_file=None):
+def modify_edf_header(edf_file, lookup, max_date, output_file=None, output_dir=None):
     """Modify EDF header with new start date and time. Returns info dict for CSV output."""
     
     if not os.path.exists(edf_file):
@@ -159,14 +159,25 @@ def modify_edf_header(edf_file, lookup, max_date, output_file=None):
     
     # Write to output file
     if output_file is None:
-        # Create modified_files directory if it doesn't exist
-        base_dir = os.path.dirname(edf_file) or '.'
-        modified_dir = os.path.join(base_dir, 'modified_files')
+        # Determine the output directory
+        if output_dir:
+            # Use user-specified output directory
+            modified_dir = output_dir
+        else:
+            # Create modified_files directory if it doesn't exist
+            base_dir = os.path.dirname(edf_file) or '.'
+            modified_dir = os.path.join(base_dir, 'modified_files')
+        
         os.makedirs(modified_dir, exist_ok=True)
         
-        # Keep the original filename, just put it in modified_files folder
+        # Keep the original filename, just put it in the specified directory
         filename = os.path.basename(edf_file)
         output_file = os.path.join(modified_dir, filename)
+    elif output_dir:
+        # If output_file is specified but output_dir is also provided, use output_dir as base
+        os.makedirs(output_dir, exist_ok=True)
+        filename = os.path.basename(output_file)
+        output_file = os.path.join(output_dir, filename)
     
     with open(output_file, 'wb') as f:
         f.write(content)
@@ -186,15 +197,18 @@ def modify_edf_header(edf_file, lookup, max_date, output_file=None):
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python modify_edf_dates.py <output.csv> <intput.edf> [modified_output.edf]")
-        print("\nExample:")
+        print("Usage: python modify_edf_dates.py <csv_file> <input.edf> [output_file] [output_dir]")
+        print("\nExamples:")
         print("  python modify_edf_dates.py output.csv input.edf")
-        print("  or python modify_edf_dates.py output.csv input.edf modified_output.edf")
+        print("  python modify_edf_dates.py output.csv input.edf modified_output.edf")
+        print("  python modify_edf_dates.py output.csv input.edf modified_output.edf /path/to/output")
+        print("  python modify_edf_dates.py output.csv input.edf \"\" /path/to/output")  # Empty string for default filename
         sys.exit(1)
     
     csv_file = sys.argv[1]
     edf_file = sys.argv[2]
-    output_file = sys.argv[3] if len(sys.argv) > 3 else None
+    output_file = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] != "" else None
+    output_dir = sys.argv[4] if len(sys.argv) > 4 else None
     
     # Maximum allowed date
     max_date = datetime(2025, 1, 1)
@@ -214,7 +228,7 @@ def main():
     print()
     
     # Modify EDF header
-    result = modify_edf_header(edf_file, lookup, max_date, output_file)
+    result = modify_edf_header(edf_file, lookup, max_date, output_file, output_dir)
     
     if result:
         print(f"Patient ID: {result['patient_identifier']}")

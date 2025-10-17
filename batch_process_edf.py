@@ -4,7 +4,7 @@
 Script: batch_process_edf.py
 Description: Batch process all EDF files in a directory using modify_edf_dates.py
 Creates a CSV file documenting the results of all processed files.
-Usage: python batch_process_edf.py <csv_file> <edf_directory> [output_csv]
+Usage: python batch_process_edf.py <csv_file> <edf_directory> [output_csv] [output_dir]
 """
 
 import sys
@@ -31,7 +31,8 @@ def run_modify_edf_script(csv_file, edf_file, output_dir):
     script_path = os.path.join(os.path.dirname(__file__), 'modify_edf_dates.py')
     
     try:
-        cmd = ['python', script_path, csv_file, edf_file, output_file]
+        # Pass empty string for output_file and the output_dir as the 4th parameter
+        cmd = ['python', script_path, csv_file, edf_file, '', output_dir]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         
         # Parse the output to extract information
@@ -140,15 +141,18 @@ def write_results_csv(results, output_csv):
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python batch_process_edf.py <csv_file> <edf_directory> [output_csv]")
-        print("\nExample:")
+        print("Usage: python batch_process_edf.py <csv_file> <edf_directory> [output_csv] [output_dir]")
+        print("\nExamples:")
         print("  python batch_process_edf.py random_number_output.csv . results.csv")
-        print("  python batch_process_edf.py random_number_output.csv /path/to/edf/files")
+        print("  python batch_process_edf.py random_number_output.csv /path/to/edf/files results.csv")
+        print("  python batch_process_edf.py random_number_output.csv . results.csv /custom/output/path")
+        print("  python batch_process_edf.py random_number_output.csv . \"\" /custom/output/path")  # Empty string for default CSV name
         sys.exit(1)
     
     csv_file = sys.argv[1]
     edf_directory = sys.argv[2]
-    output_csv = sys.argv[3] if len(sys.argv) > 3 else 'batch_processing_results.csv'
+    output_csv = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] != "" else 'batch_processing_results.csv'
+    custom_output_dir = sys.argv[4] if len(sys.argv) > 4 else None
     
     # Validate inputs
     if not os.path.exists(csv_file):
@@ -160,7 +164,10 @@ def main():
         sys.exit(1)
     
     # Create output directory for modified files
-    output_dir = os.path.join(edf_directory, 'modified_files')
+    if custom_output_dir:
+        output_dir = custom_output_dir
+    else:
+        output_dir = os.path.join(edf_directory, 'modified_files')
     os.makedirs(output_dir, exist_ok=True)
     
     # Find all EDF files
