@@ -23,9 +23,9 @@ def find_edf_files(directory):
 
 def run_modify_edf_script(csv_file, edf_file, output_dir):
     """Run modify_edf_dates.py on a single EDF file and parse the output."""
-    # Create output filename
+    # Create output filename - keep original name, just put in modified_files folder
     basename = os.path.basename(edf_file)
-    output_file = os.path.join(output_dir, basename.replace('.edf', '_modified.edf'))
+    output_file = os.path.join(output_dir, basename)
     
     # Run the modify_edf_dates.py script
     script_path = os.path.join(os.path.dirname(__file__), 'modify_edf_dates.py')

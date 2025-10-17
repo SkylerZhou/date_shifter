@@ -159,9 +159,14 @@ def modify_edf_header(edf_file, lookup, max_date, output_file=None):
     
     # Write to output file
     if output_file is None:
-        output_file = edf_file.replace('.edf', '_modified.edf')
-        if output_file == edf_file:
-            output_file = edf_file + '_modified.edf'
+        # Create modified_files directory if it doesn't exist
+        base_dir = os.path.dirname(edf_file) or '.'
+        modified_dir = os.path.join(base_dir, 'modified_files')
+        os.makedirs(modified_dir, exist_ok=True)
+        
+        # Keep the original filename, just put it in modified_files folder
+        filename = os.path.basename(edf_file)
+        output_file = os.path.join(modified_dir, filename)
     
     with open(output_file, 'wb') as f:
         f.write(content)
