@@ -11,12 +11,12 @@ This toolkit de-identifies patient data by applying random date shifts to EDF (E
 
 The de-identification process consists of three sequential steps executed by `main.sh`:
 
-### 1. Random Number Generation  
+### 1. `random_number_generator.sh`
 - **Input:** CSV file containing patient identifiers
 - **Process:** Generates random day offsets (±3 years range) for each unique patient
 - **Output:** CSV file mapping patient IDs to random day offsets
 
-### 2. EDF File Processing  
+### 2. `batch_process_edf.py`
 - **Input:** EDF files directory and random number mappings
 - **Process:** 
   - Extracts original date/time from EDF headers
@@ -24,8 +24,8 @@ The de-identification process consists of three sequential steps executed by `ma
 - **Output:** 
   - Modified EDF files in designated output directory
   - CSV report with original and new EDF timestamps
-
-### 3. XML Annotation Synchronization  
+`
+### 3. `update_xml_createtime.py`
 - **Input:** XML annotation files and EDF processing results
 - **Process:**
   - Parses all `createTime` attributes in XML files
@@ -35,7 +35,7 @@ The de-identification process consists of three sequential steps executed by `ma
   - UPdated CSV report to include XML timestamps
 
 ## To run
-- Preapre a CSV file with patient identifiers 
+- Preapre a CSV file with the patient identifier in the first column
 - Edit main.sh to set your input/output directories and file names
 - Run with ./main.sh
 
