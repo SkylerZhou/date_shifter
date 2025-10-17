@@ -128,16 +128,20 @@ def write_results_csv(results, output_csv):
         'original_edf_startdate',
         'original_edf_starttime',
         'new_edf_startdate',
-        'new_edf_starttime',
-        'random_days_offset',
-        'status',
-        'error_message'
+        'new_edf_starttime'
     ]
+    
+    # Filter results to only include successful ones and only the desired fields
+    filtered_results = []
+    for result in results:
+        if result.get('status') == 'success':
+            filtered_result = {field: result.get(field, '') for field in fieldnames}
+            filtered_results.append(filtered_result)
     
     with open(output_csv, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(results)
+        writer.writerows(filtered_results)
 
 def main():
     if len(sys.argv) < 3:
@@ -176,16 +180,11 @@ def main():
     if not edf_files:
         print(f"No EDF files found in directory '{edf_directory}'")
         sys.exit(1)
-    
+
+    print()   
     print("="*70)
     print("EDF Batch Processor")
-    print("="*70)
-    print(f"CSV file: {csv_file}")
-    print(f"EDF directory: {edf_directory}")
-    print(f"Output CSV: {output_csv}")
-    print(f"Modified files directory: {output_dir}")
     print(f"Found {len(edf_files)} EDF files to process")
-    print("="*70)
     print()
     
     results = []
@@ -210,15 +209,12 @@ def main():
     successful = sum(1 for r in results if r['status'] == 'success')
     failed = len(results) - successful
     
-    print("="*70)
     print("SUMMARY")
-    print("="*70)
     print(f"Total files processed: {len(results)}")
     print(f"Successfully processed: {successful}")
     print(f"Failed: {failed}")
-    print(f"Results saved to: {output_csv}")
-    print(f"Modified EDF files saved to: {output_dir}")
     print("="*70)
+    print()
 
 if __name__ == "__main__":
     main()

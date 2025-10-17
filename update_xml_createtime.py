@@ -45,21 +45,22 @@ def format_createtime(dt):
     return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
 
 def read_batch_results_csv(csv_file):
-    """Read the batch processing results CSV and create lookup dictionary"""
+    """Read the batch processing results CSV and return both lookup and original data"""
     lookup = {}
+    csv_data = []
     try:
         with open(csv_file, 'r') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                if row['status'] == 'success':  # Only process successful modifications
-                    patient_id = row['patient_identifier'].strip()
-                    lookup[patient_id] = {
-                        'original_edf_startdate': row['original_edf_startdate'],
-                        'original_edf_starttime': row['original_edf_starttime'],
-                        'new_edf_startdate': row['new_edf_startdate'],
-                        'new_edf_starttime': row['new_edf_starttime']
-                    }
-        return lookup
+                csv_data.append(row)
+                patient_id = row['patient_identifier'].strip()
+                lookup[patient_id] = {
+                    'original_edf_startdate': row['original_edf_startdate'],
+                    'original_edf_starttime': row['original_edf_starttime'],
+                    'new_edf_startdate': row['new_edf_startdate'],
+                    'new_edf_starttime': row['new_edf_starttime']
+                }
+        return lookup, csv_data
     except FileNotFoundError:
         print(f"Error: CSV file '{csv_file}' not found")
         sys.exit(1)
@@ -77,8 +78,76 @@ def calculate_date_offset(original_date_str, new_date_str):
         print(f"Error calculating date offset: {e}")
         return 0
 
+def get_xml_createtime_info(xml_file, lookup):
+    """Extract createTime from XML file and calculate original/new values"""
+    try:
+        # Extract patient ID
+        patient_id = extract_patient_id_from_filename(xml_file)
+        if not patient_id or patient_id not in lookup:
+            return {
+                'original_xml_createdate': '',
+                'original_xml_createtime': '',
+                'new_xml_createdate': '',
+                'new_xml_createtime': ''
+            }
+        
+        # Parse the XML file
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+        
+        # Find first createTime attribute (any will do since they should be similar)
+        first_createtime = None
+        for elem in root.iter():
+            if 'createTime' in elem.attrib:
+                first_createtime = elem.get('createTime')
+                break
+        
+        if not first_createtime:
+            return {
+                'original_xml_createdate': '',
+                'original_xml_createtime': '',
+                'new_xml_createdate': '',
+                'new_xml_createtime': ''
+            }
+        
+        # Parse the original createTime
+        original_dt = parse_createtime(first_createtime)
+        if not original_dt:
+            return {
+                'original_xml_createdate': '',
+                'original_xml_createtime': '',
+                'new_xml_createdate': '',
+                'new_xml_createtime': ''
+            }
+        
+        # Calculate date offset from EDF data
+        edf_data = lookup[patient_id]
+        date_offset = calculate_date_offset(
+            edf_data['original_edf_startdate'], 
+            edf_data['new_edf_startdate']
+        )
+        
+        # Calculate new createTime (applying date offset, time unchanged)
+        new_dt = original_dt + timedelta(days=date_offset)
+        
+        return {
+            'original_xml_createdate': original_dt.strftime('%Y-%m-%d'),
+            'original_xml_createtime': original_dt.strftime('%H:%M:%S'),
+            'new_xml_createdate': new_dt.strftime('%Y-%m-%d'),
+            'new_xml_createtime': new_dt.strftime('%H:%M:%S')
+        }
+            
+    except Exception as e:
+        print(f"Error reading XML file {xml_file}: {e}")
+        return {
+            'original_xml_createdate': '',
+            'original_xml_createtime': '',
+            'new_xml_createdate': '',
+            'new_xml_createtime': ''
+        }
+
 def update_xml_createtimes(xml_file, lookup, output_dir):
-    """Update createTime values in XML file based on EDF date modifications"""
+    """Update createTime values in XML file based on EDF date modifications while preserving formatting"""
     
     # Extract patient ID from filename
     patient_id = extract_patient_id_from_filename(xml_file)
@@ -92,7 +161,11 @@ def update_xml_createtimes(xml_file, lookup, output_dir):
     edf_data = lookup[patient_id]
     
     try:
-        # Parse the XML file
+        # Read the XML file as text to preserve formatting
+        with open(xml_file, 'r', encoding='utf-8') as f:
+            xml_content = f.read()
+        
+        # Also parse with ElementTree to validate and get createTime info
         tree = ET.parse(xml_file)
         root = tree.getroot()
         
@@ -135,27 +208,37 @@ def update_xml_createtimes(xml_file, lookup, output_dir):
         if date_offset == 0:
             return {'status': 'skipped', 'error': 'No date offset needed'}
         
-        print(f"  Applying date offset: {date_offset} days")
+        # Use regex to find and replace createTime values in the text
+        import re
         
-        # Update all createTime attributes
-        updated_count = 0
-        for elem in createtime_elements:
-            old_createtime = elem.get('createTime')
+        # Pattern to match createTime attributes: createTime="YYYY-MM-DDTHH:MM:SSZ"
+        createtime_pattern = r'createTime="(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"'
+        
+        def replace_createtime(match):
+            old_createtime = match.group(1)
             old_dt = parse_createtime(old_createtime)
             
             if old_dt:
                 # Apply the date offset
                 new_dt = old_dt + timedelta(days=date_offset)
                 new_createtime = format_createtime(new_dt)
-                elem.set('createTime', new_createtime)
-                updated_count += 1
+                return f'createTime="{new_createtime}"'
+            else:
+                return match.group(0)  # Return unchanged if parsing fails
+        
+        # Replace all createTime values
+        updated_content = re.sub(createtime_pattern, replace_createtime, xml_content)
+        
+        # Count how many replacements were made
+        updated_count = len(re.findall(createtime_pattern, xml_content))
         
         # Create output filename
         basename = os.path.basename(xml_file)
         output_file = os.path.join(output_dir, basename)
         
-        # Write the updated XML
-        tree.write(output_file, encoding='utf-8', xml_declaration=True)
+        # Write the updated XML content, preserving original formatting
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(updated_content)
         
         return {
             'status': 'success',
@@ -173,6 +256,48 @@ def find_xml_files(directory):
     """Find all XML annotation files in the specified directory"""
     xml_pattern = os.path.join(directory, "*-annotations.xml")
     return glob.glob(xml_pattern)
+
+def write_updated_csv(csv_data, xml_createtime_data, output_csv_file):
+    """Write updated CSV with new columns for XML createTime info"""
+    fieldnames = [
+        'edf_file',
+        'patient_identifier',
+        'original_edf_startdate',
+        'original_edf_starttime',
+        'new_edf_startdate',
+        'new_edf_starttime',
+        'original_xml_createdate',
+        'original_xml_createtime',
+        'new_xml_createdate',
+        'new_xml_createtime'
+    ]
+    
+    # Merge the data
+    updated_rows = []
+    for row in csv_data:
+        patient_id = row['patient_identifier']
+        new_row = row.copy()
+        
+        # Add XML createTime data if available
+        if patient_id in xml_createtime_data:
+            xml_data = xml_createtime_data[patient_id]
+            new_row['original_xml_createdate'] = xml_data['original_xml_createdate']
+            new_row['original_xml_createtime'] = xml_data['original_xml_createtime']
+            new_row['new_xml_createdate'] = xml_data['new_xml_createdate']
+            new_row['new_xml_createtime'] = xml_data['new_xml_createtime']
+        else:
+            new_row['original_xml_createdate'] = ''
+            new_row['original_xml_createtime'] = ''
+            new_row['new_xml_createdate'] = ''
+            new_row['new_xml_createtime'] = ''
+        
+        updated_rows.append(new_row)
+    
+    # Write the updated CSV
+    with open(output_csv_file, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(updated_rows)
 
 def main():
     if len(sys.argv) < 3:
@@ -205,22 +330,30 @@ def main():
         print(f"No XML annotation files found in directory '{xml_directory}'")
         sys.exit(1)
     
+    print()
     print("="*70)
     print("XML CreateTime Updater")
-    print("="*70)
-    print(f"CSV file: {csv_file}")
-    print(f"XML directory: {xml_directory}")
-    print(f"Output directory: {output_directory}")
     print(f"Found {len(xml_files)} XML files to process")
-    print("="*70)
     print()
     
     # Read batch processing results
-    lookup = read_batch_results_csv(csv_file)
-    print(f"Loaded {len(lookup)} successful EDF modifications from CSV")
+    lookup, csv_data = read_batch_results_csv(csv_file)
+    
+    # Collect XML createTime data
+    xml_createtime_data = {}
+    
+    # First pass: collect original and new createTime from each XML file
+    for xml_file in xml_files:
+        basename = os.path.basename(xml_file)
+        patient_id = extract_patient_id_from_filename(xml_file)
+        
+        if patient_id:
+            xml_info = get_xml_createtime_info(xml_file, lookup)
+            xml_createtime_data[patient_id] = xml_info
+    
     print()
     
-    # Process each XML file
+    # Process each XML file for updates
     results = []
     
     for i, xml_file in enumerate(xml_files, 1):
@@ -234,25 +367,27 @@ def main():
         print(f"  Status: {result['status']}")
         if result['status'] == 'success':
             print(f"  Updated {result['updated_count']} createTime entries")
-            print(f"  Date offset: {result['date_offset']} days")
         elif result.get('error'):
             print(f"  {result['error']}")
         print()
+    
+    # Write updated CSV with XML createTime data
+    updated_csv_file = csv_file.replace('.csv', '_xml.csv')
+    write_updated_csv(csv_data, xml_createtime_data, updated_csv_file)
+    print(f"Updated CSV saved to: {updated_csv_file}")
     
     # Summary
     successful = sum(1 for r in results if r['status'] == 'success')
     skipped = sum(1 for r in results if r['status'] == 'skipped')
     failed = sum(1 for r in results if r['status'] == 'failed')
     
-    print("="*70)
     print("SUMMARY")
-    print("="*70)
     print(f"Total XML files processed: {len(results)}")
     print(f"Successfully updated: {successful}")
     print(f"Skipped: {skipped}")
     print(f"Failed: {failed}")
-    print(f"Modified XML files saved to: {output_directory}")
     print("="*70)
+    print()
 
 if __name__ == "__main__":
     main()

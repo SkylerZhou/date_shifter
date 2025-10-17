@@ -3,6 +3,9 @@
 # Script: random_number_generator.sh
 # Description: Extracts identifiers from first column (screening_id) and adds random day offset (±3 years)
 
+echo "======================================================================"
+echo "Random Number Generator"
+
 # Check if input file is provided
 if [ $# -eq 0 ]; then
     echo "Usage: $0 <random_number_input_csv_file> <random_number_output_csv_file>"
@@ -59,3 +62,5 @@ done <<< "$unique_identifiers"
 
 echo "Processing complete! Output saved to: $OUTPUT_FILE"
 echo "Random day offsets range: -1095 to +1095 days (±3 years)"
+echo "======================================================================"
+echo ""
