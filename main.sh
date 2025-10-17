@@ -1,7 +1,5 @@
 #!/bin/bash
 
-# Description: Main script to run the random number generator
-
 # Step 1: run random_number_generator.sh to generate random day offsets for each patient identifier
 # Usage: ./random_number_generator.sh <input csv with patient identifiers> <output csv with patient identifiers and random offsets within ±3 years>
 ./random_number_generator.sh random_number_input.csv random_number_output.csv
