@@ -2,18 +2,30 @@
 
 """
 Script: modify_edf_dates.py
-Description: Modifies EDF file start dates based on random day offsets from CSV
-Run the script using: python modify_edf_dates.py <random_number_output.csv> <input.edf> [modified_output.edf]
-    random_number_output.csv is the CSV file with patient identifiers and random day offsets.
-    input.edf is the EDF file to be modified.
-    output.edf is optional; if not provided, a default name will be used.
+Description: Modifies EDF file start dates based on random day offsets from CSV.
+             Processes all EDF files in an input directory and outputs date-shifted files
+             to an output directory with a validation CSV.
+
+Usage: python modify_edf_dates.py --input-dir <input_dir> --random-csv <random_csv> 
+                                   --output-dir <output_dir> --output-csv <output_csv>
+
+Arguments:
+    --input-dir: Directory containing EDF files to process
+    --random-csv: CSV file with patient identifiers and random day offsets
+    --output-dir: Directory to save date-shifted EDF files
+    --output-csv: CSV file to save validation data (patient_identifier, original_date, new_date)
 """
 
 import sys
 import csv
+import argparse
+import glob
+import re
 from datetime import datetime, timedelta
 import os
 
+
+# ==== Functions to parse EDF date from bytes 168-175 ====
 def parse_edf_date(date_str):
     """Parse EDF date format (dd.mm.yy) to datetime object."""
     date_str = date_str.strip()
@@ -40,16 +52,23 @@ def parse_edf_datetime(date_str, time_str):
     hour, minute, second = parse_edf_time(time_str)
     return datetime(date_obj.year, date_obj.month, date_obj.day, hour, minute, second)
 
+
+# ==== Functions to re-format EDF date for bytes 168-175 and 88-167 ====
 def format_edf_date(date_obj):
     """Format datetime object to EDF date format (dd.mm.yy)."""
     # EDF uses 2-digit year
     year_2digit = date_obj.year % 100
     return f"{date_obj.day:02d}.{date_obj.month:02d}.{year_2digit:02d}"
 
-def format_edf_time(datetime_obj):
-    """Format datetime object to EDF time format (hh.mm.ss)."""
-    return f"{datetime_obj.hour:02d}.{datetime_obj.minute:02d}.{datetime_obj.second:02d}"
+def format_startdate_field(date_obj):
+    """Format datetime object to 'Startdate DD-MMM-YYYY' format for recording identification field."""
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+              'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    month_name = months[date_obj.month - 1]
+    return f"Startdate {date_obj.day:02d}-{month_name}-{date_obj.year}"
 
+
+# ==== Helper functions to match patient ids in CSV and EDF filenames ===== 
 def read_csv_lookup(csv_file):
     """Read the random_number CSV and create lookup dictionary."""
     lookup = {}
@@ -68,32 +87,22 @@ def read_csv_lookup(csv_file):
         print(f"Error: CSV file missing required column: {e}")
         sys.exit(1)
 
-def extract_patient_id_from_edf_header(patient_id_raw):
-    """Extract patient ID from EDF header format PRV-XXX-XXXX-XX to get XXXX part."""
-    import re
-    
-    # Look for pattern PRV-XXX-XXXX-XX within the patient identification field
-    pattern = r'PRV-\d+-([A-Z0-9]+)-\d+'
-    match = re.search(pattern, patient_id_raw)
+def extract_patient_id_from_filename(filename):
+    """Extract patient ID from EDF filename format PRV-<site>-<patient_id>-<age>.edf"""
+    # Pattern: PRV-XXX-XXXX-XX.edf where XXXX is the patient identifier
+    pattern = r'PRV-[^-]+-([^-]+)-[^-]+\.edf'
+    match = re.search(pattern, filename)
     
     if match:
-        # Return the part between 2nd and 3rd hyphen (group 1)
         return match.group(1).strip()
     else:
-        # If pattern doesn't match, look for any sequence that looks like our IDs
-        # Try to find alphanumeric sequences that might be patient IDs
-        words = patient_id_raw.split()
-        for word in words:
-            # Look for words that are 4 characters long and alphanumeric (typical of our IDs)
-            if len(word) == 4 and word.isalnum():
-                return word.strip()
-        
-        # If still no match, return the original stripped
-        print(f"Warning: Could not extract patient ID from '{patient_id_raw}'")
-        return patient_id_raw.strip()
+        print(f"Warning: Could not extract patient ID from filename '{filename}'")
+        return None
 
-def modify_edf_header(edf_file, lookup, max_date, output_file=None, output_dir=None):
-    """Modify EDF header with new start date and time. Returns info dict for CSV output."""
+
+# ==== Main functions to loop through all files and modify EDF headers ====
+def modify_edf_header(edf_file, patient_id, random_days, output_dir):
+    """Modify EDF header with new start date. Returns info dict for CSV output."""
     
     if not os.path.exists(edf_file):
         print(f"Error: EDF file '{edf_file}' not found")
@@ -106,7 +115,7 @@ def modify_edf_header(edf_file, lookup, max_date, output_file=None, output_dir=N
     # EDF header structure (first 256 bytes minimum)
     # Bytes 0-7: Version
     # Bytes 8-87: Local patient identification (80 bytes)
-    # Bytes 88-167: Local recording identification (80 bytes)
+    # Bytes 88-167: Local recording identification (80 bytes) - contains "Startdate DD-MMM-YYYY"
     # Bytes 168-175: Startdate (dd.mm.yy) (8 bytes)
     # Bytes 176-183: Starttime (hh.mm.ss) (8 bytes)
     
@@ -114,21 +123,7 @@ def modify_edf_header(edf_file, lookup, max_date, output_file=None, output_dir=N
         print(f"Error: EDF file '{edf_file}' is too small (< 256 bytes)")
         return None
     
-    # Extract patient identifier
-    patient_id_raw = content[8:88].decode('ascii', errors='ignore').strip()
-    
-    # Extract the relevant part (between 2nd and 3rd hyphen)
-    patient_id = extract_patient_id_from_edf_header(patient_id_raw)
-    
-    # Check if patient ID exists in lookup
-    if patient_id not in lookup:
-        print(f"Warning: Patient identifier '{patient_id}' not found in CSV")
-        print("Available identifiers in CSV:", list(lookup.keys()))
-        return None
-    
-    random_days = lookup[patient_id]
-    
-    # Extract current start date and time
+    # Extract current start date and time from bytes 168-183
     start_date_str = content[168:176].decode('ascii', errors='ignore')
     start_time_str = content[176:184].decode('ascii', errors='ignore')
     
@@ -141,43 +136,37 @@ def modify_edf_header(edf_file, lookup, max_date, output_file=None, output_dir=N
     # Calculate new date (keeping the same time)
     new_date = original_datetime.date() + timedelta(days=random_days)
     new_datetime = datetime.combine(new_date, original_datetime.time())
-    print(f"New calculated date: {new_datetime.strftime('%Y-%m-%d')} (time unchanged: {original_datetime.strftime('%H:%M:%S')})")
-    
-    # Check if new date exceeds maximum allowed date
-    if new_datetime.date() > max_date.date():
-        print(f"WARNING: New date {new_datetime.strftime('%Y-%m-%d')} exceeds maximum allowed date {max_date.strftime('%Y-%m-%d')}")
-        print("Modification aborted for this file.")
-        return None
     
     # Format new date for EDF (time remains unchanged)
     new_date_str = format_edf_date(new_datetime)
     
-    # Modify the header - only change the date field
+    # Modify the date field in bytes 168-175
     # Ensure date is exactly 8 bytes (padded with spaces if needed)
     new_date_bytes = new_date_str.ljust(8).encode('ascii')
     content[168:176] = new_date_bytes
     
+    # Modify the "Startdate DD-MMM-YYYY" field in the recording identification (bytes 88-167)
+    recording_id = content[88:168].decode('ascii', errors='ignore')
+    
+    # Replace the Startdate field with the new date
+    new_startdate_str = format_startdate_field(new_datetime)
+    
+    # The recording identification field is 80 bytes, pad with spaces
+    # Keep any text after the date if it exists, or just pad with spaces
+    if 'Startdate' in recording_id:
+        # Replace just the Startdate portion, preserving any trailing content
+        new_recording_id = new_startdate_str.ljust(80)
+    else:
+        # If no Startdate found, just use the new one
+        new_recording_id = new_startdate_str.ljust(80)
+    
+    new_recording_id_bytes = new_recording_id[:80].encode('ascii', errors='replace')
+    content[88:168] = new_recording_id_bytes
+    
     # Write to output file
-    if output_file is None:
-        # Determine the output directory
-        if output_dir:
-            # Use user-specified output directory
-            modified_dir = output_dir
-        else:
-            # Create modified_files directory if it doesn't exist
-            base_dir = os.path.dirname(edf_file) or '.'
-            modified_dir = os.path.join(base_dir, 'modified_files')
-        
-        os.makedirs(modified_dir, exist_ok=True)
-        
-        # Keep the original filename, just put it in the specified directory
-        filename = os.path.basename(edf_file)
-        output_file = os.path.join(modified_dir, filename)
-    elif output_dir:
-        # If output_file is specified but output_dir is also provided, use output_dir as base
-        os.makedirs(output_dir, exist_ok=True)
-        filename = os.path.basename(output_file)
-        output_file = os.path.join(output_dir, filename)
+    os.makedirs(output_dir, exist_ok=True)
+    filename = os.path.basename(edf_file)
+    output_file = os.path.join(output_dir, filename)
     
     with open(output_file, 'wb') as f:
         f.write(content)
@@ -185,58 +174,126 @@ def modify_edf_header(edf_file, lookup, max_date, output_file=None, output_dir=N
     # Return information for CSV output
     return {
         'patient_identifier': patient_id,
-        'original_edf_startdate': original_datetime.strftime('%Y-%m-%d'),
-        'original_edf_starttime': original_datetime.strftime('%H:%M:%S'),
-        'new_edf_startdate': new_datetime.strftime('%Y-%m-%d'),
-        'new_edf_starttime': original_datetime.strftime('%H:%M:%S'),  # Time remains unchanged
+        'original_date': original_datetime.strftime('%Y-%m-%d'),
+        'new_date': new_datetime.strftime('%Y-%m-%d'),
         'random_days_offset': random_days,
-        'output_file': output_file
+                'output_file': output_file
     }
 
 
-
-def main():
-    if len(sys.argv) < 3:
-        print("Usage: python modify_edf_dates.py <csv_file> <input.edf> [output_file] [output_dir]")
-        print("\nExamples:")
-        print("  python modify_edf_dates.py output.csv input.edf")
-        print("  python modify_edf_dates.py output.csv input.edf modified_output.edf")
-        print("  python modify_edf_dates.py output.csv input.edf modified_output.edf /path/to/output")
-        print("  python modify_edf_dates.py output.csv input.edf \"\" /path/to/output")  # Empty string for default filename
-        sys.exit(1)
-    
-    csv_file = sys.argv[1]
-    edf_file = sys.argv[2]
-    output_file = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] != "" else None
-    output_dir = sys.argv[4] if len(sys.argv) > 4 else None
-    
-    # Maximum allowed date
-    max_date = datetime(2025, 1, 1)
-    
-    print("="*60)
-    print("EDF Date Modifier")
-    print("="*60)
-    print(f"CSV file: {csv_file}")
-    print(f"EDF file: {edf_file}")
-    print(f"Maximum date: {max_date.strftime('%Y-%m-%d')}")
-    print("="*60)
-    print()
+def process_directory(input_dir, random_csv, output_dir, output_csv):
+    """Process all EDF files in input directory and generate validation CSV."""
     
     # Read CSV lookup table
-    lookup = read_csv_lookup(csv_file)
-    print(f"Loaded {len(lookup)} entries from CSV")
-    print()
+    lookup = read_csv_lookup(random_csv)
+    print(f"Loaded {len(lookup)} patient mappings from CSV")
     
-    # Modify EDF header
-    result = modify_edf_header(edf_file, lookup, max_date, output_file, output_dir)
+    # Find all EDF files in input directory
+    edf_pattern = os.path.join(input_dir, "*.edf")
+    edf_files = glob.glob(edf_pattern)
     
-    if result:
-        print(f"Patient ID: {result['patient_identifier']}")
-        print(f"Original date/time: {result['original_edf_startdate']} {result['original_edf_starttime']}")
-        print(f"New date/time: {result['new_edf_startdate']} {result['new_edf_starttime']}")
-    else:
-        print("\n✗ Process failed or aborted")
+    if not edf_files:
+        print(f"No EDF files found in {input_dir}")
+        return
+    
+    print(f"Found {len(edf_files)} EDF files to process")
+    
+    # Store results for CSV output
+    results = []
+    processed_count = 0
+    skipped_count = 0
+    
+    # Process each EDF file
+    for edf_file in sorted(edf_files):
+        filename = os.path.basename(edf_file)
+        print(f"\nProcessing: {filename}")
+        
+        # Extract patient ID from filename
+        patient_id = extract_patient_id_from_filename(filename)
+        
+        if patient_id is None:
+            print(f"  ✗ Skipped: Could not extract patient ID from filename")
+            skipped_count += 1
+            continue
+                
+        # Check if patient ID exists in lookup
+        if patient_id not in lookup:
+            print(f"  ✗ Skipped: Patient ID '{patient_id}' not found in random number CSV")
+            skipped_count += 1
+            continue
+        
+        random_days = lookup[patient_id]
+        print(f"  Random offset: {random_days} days")
+        
+        # Modify EDF header
+        result = modify_edf_header(edf_file, patient_id, random_days, output_dir)
+        
+        if result:
+            print(f"  Original date: {result['original_date']}")
+            print(f"  New date: {result['new_date']}")
+            results.append(result)
+            processed_count += 1
+        else:
+            print(f"  ✗ Failed to process")
+            skipped_count += 1
+    
+    print(f"\nProcessing Summary:")
+    print(f"Total files: {len(edf_files)}")
+    print(f"Successfully processed: {processed_count}")
+    print(f"Skipped: {skipped_count}")
+    
+    # Write validation CSV
+    if results:
+        with open(output_csv, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['patient_identifier', 'original_date', 'new_date'])
+            writer.writeheader()
+            for result in results:
+                writer.writerow({
+                    'patient_identifier': result['patient_identifier'],
+                    'original_date': result['original_date'],
+                    'new_date': result['new_date']
+                })
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Modify EDF file dates based on random day offsets',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python modify_edf_dates.py --input-dir ./input --random-csv random_number_output.csv \\
+                              --output-dir ./output --output-csv datetime_edf.csv
+        """
+    )
+    
+    parser.add_argument('--input-dir', required=True,
+                        help='Directory containing EDF files to process')
+    parser.add_argument('--random-csv', required=True,
+                        help='CSV file with patient identifiers and random day offsets')
+    parser.add_argument('--output-dir', required=True,
+                        help='Directory to save date-shifted EDF files')
+    parser.add_argument('--output-csv', required=True,
+                        help='CSV file to save validation data (patient_identifier, original_date, new_date)')
+    
+    args = parser.parse_args()
+    
+    # Validate input directory exists
+    if not os.path.exists(args.input_dir):
+        print(f"Error: Input directory '{args.input_dir}' does not exist")
         sys.exit(1)
+    
+    # Validate random CSV exists
+    if not os.path.exists(args.random_csv):
+        print(f"Error: Random number CSV '{args.random_csv}' does not exist")
+        sys.exit(1)
+    
+    print("="*80)
+    print("EDF Date Modifier")
+    print("")
+    
+    # Process all files
+    process_directory(args.input_dir, args.random_csv, args.output_dir, args.output_csv)
+    print("="*80 + "\n")
+
 
 if __name__ == "__main__":
     main()

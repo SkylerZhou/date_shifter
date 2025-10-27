@@ -2,6 +2,6 @@
 *.edf
 *.xml
 
-/legacy_files/
-/input/
-/output/
+legacy/
+input/
+output/
