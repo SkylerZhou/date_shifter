@@ -220,13 +220,19 @@ def process_directory(input_dir, edf_csv, output_dir, output_csv):
             row['creatorId'] = ''
             row['more_than_one_layer'] = ''
     
-    # Write updated CSV
+    # Write updated CSV (filter to only include desired columns)
     with open(output_csv, 'w', newline='') as f:
-        fieldnames = ['patient_identifier', 'original_date', 'new_date', 
-                      'annotator', 'creatorId', 'more_than_one_layer']
+        fieldnames = ['patient_identifier', 'annotator', 'creatorId', 'more_than_one_layer']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(csv_data)
+        
+        # Filter each row to only include the desired fields
+        filtered_rows = []
+        for row in csv_data:
+            filtered_row = {field: row.get(field, '') for field in fieldnames}
+            filtered_rows.append(filtered_row)
+        
+        writer.writerows(filtered_rows)
 
 
 def main():
